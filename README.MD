@@ -25,3 +25,4 @@ Install *library* yang dibutuhkan:
 ```bash
 pip install pandas numpy ccxt tabulate
 
+Tribute to ChatGPT
