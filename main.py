@@ -1,7 +1,7 @@
 #!/data/data/com.termux/files/usr/bin/env python3
 """
 Crypto TA Analyzer + Smart Money (Production Version)
-+ Base TF Priority + Improved Conditional Logic
++ Improved Conditional Logic + Risk Control
 """
 
 import time
@@ -28,6 +28,7 @@ MTF_MAP = {
 }
 
 RISK_REWARD = 2.0
+MAX_OB_DISTANCE_ATR = 2.0   # Conditional hanya aktif jika OB dalam jarak ini
 
 SCORE_WEIGHTS = {
     "ema_cross": 15,
@@ -45,7 +46,7 @@ SCORE_WEIGHTS = {
 }
 
 # =========================
-# INDICATORS (sama seperti sebelumnya)
+# INDICATORS (sama)
 # =========================
 def ema(s, n):
     return s.ewm(span=n, adjust=False).mean()
@@ -285,49 +286,62 @@ class CryptoAnalyzer:
         recent_swing_high = df['high'].iloc[sh_idx[-1]] if sh_idx else entry + (atr_val * 1.5)
         recent_swing_low  = df['low'].iloc[sl_idx[-1]] if sl_idx else entry - (atr_val * 1.5)
 
-        # Conditional Bearish - Lebih selektif
+        # === CONDITIONAL BEARISH - LEBIH KETAT ===
         if "Bear OB" in smc_info and ("Untouched" in smc_info or "Partial" in smc_info):
             bear_ob_high = entry + atr_val * 2.0
+            distance_atr = None
             try:
                 for line in smc_info.split("\n"):
                     if "Bear OB" in line and "@" in line:
                         high_part = line.split("@")[1].split("-")[1]
                         ob_high = float(high_part)
-                        if 0 < (ob_high - entry) <= atr_val * 2.5:   # OB tidak terlalu jauh
+                        dist = (ob_high - entry) / atr_val
+                        if 0 < dist <= MAX_OB_DISTANCE_ATR:   # Maksimal 2.0 ATR
                             bear_ob_high = ob_high
+                            distance_atr = dist
                             break
             except:
                 pass
-            if bear_ob_high < entry + atr_val * 3.0:
+
+            if distance_atr is not None and distance_atr <= MAX_OB_DISTANCE_ATR:
                 sl = bear_ob_high + (atr_val * 0.25)
                 if sl <= entry: sl = entry + atr_val
                 risk = sl - entry
                 tp = entry - (risk * RISK_REWARD)
                 reason.append("BEAR OB Untouched → Conditional SELL")
                 reason.append(f"SL di atas Bear OB @{bear_ob_high:.2f}")
+                reason.append(f"Distance to OB: {distance_atr:.2f} ATR")
                 rr = abs((tp - entry) / risk) if risk != 0 else 0.0
                 return {"valid": True, "entry": entry, "sl": sl, "tp": tp, "rr": rr, "reason": reason}
 
-        # Conditional Bullish
+        # === CONDITIONAL BULLISH ===
         if pd_zone == "Discount" and "Bull OB" in smc_info and ("Untouched" in smc_info or "Partial" in smc_info):
             bull_ob_low = entry - atr_val * 1.5
+            distance_atr = None
             try:
                 for line in smc_info.split("\n"):
                     if "Bull OB" in line and "@" in line:
                         low_part = line.split("@")[1].split("-")[0]
-                        bull_ob_low = min(bull_ob_low, float(low_part))
+                        ob_low = float(low_part)
+                        dist = (entry - ob_low) / atr_val
+                        if 0 < dist <= MAX_OB_DISTANCE_ATR:
+                            bull_ob_low = ob_low
+                            distance_atr = dist
+                            break
             except:
                 pass
-            sl = bull_ob_low - (atr_val * 0.2)
-            if sl >= entry: sl = entry - atr_val
-            risk = entry - sl
-            tp = entry + (risk * RISK_REWARD)
-            reason.append("DISCOUNT + Bull OB Untouched → Conditional BUY")
-            reason.append(f"SL di bawah Bull OB")
-            rr = abs((tp - entry) / risk) if risk != 0 else 0.0
-            return {"valid": True, "entry": entry, "sl": sl, "tp": tp, "rr": rr, "reason": reason}
+            if distance_atr is not None and distance_atr <= MAX_OB_DISTANCE_ATR:
+                sl = bull_ob_low - (atr_val * 0.2)
+                if sl >= entry: sl = entry - atr_val
+                risk = entry - sl
+                tp = entry + (risk * RISK_REWARD)
+                reason.append("DISCOUNT + Bull OB Untouched → Conditional BUY")
+                reason.append(f"SL di bawah Bull OB")
+                reason.append(f"Distance to OB: {distance_atr:.2f} ATR")
+                rr = abs((tp - entry) / risk) if risk != 0 else 0.0
+                return {"valid": True, "entry": entry, "sl": sl, "tp": tp, "rr": rr, "reason": reason}
 
-        # Default logic (Base TF priority)
+        # Default logic
         if "UP" in struct:
             sl = recent_swing_low - (atr_val * 0.2)
             if sl >= entry: sl = entry - atr_val 
@@ -386,7 +400,6 @@ class CryptoAnalyzer:
         if smc_info != "None": reasons_extra.append(f"SMC Zones:\n{smc_info}")
         if vol_sig == "HIGH VOLUME": reasons_extra.append("Volume Spike terdeteksi")
         
-        # Hanya tampilkan LTF jika selaras dengan action
         if act == "BUY" and "UP" in ltf_struct:
             reasons_extra.append(f"LTF Validation: {ltf_struct}")
         elif act == "SELL" and "DOWN" in ltf_struct:
